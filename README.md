@@ -20,10 +20,11 @@ Do API glovo chyba można być zalogowanym jednocześnie tylko na jednym urządz
    Podczas instalacji zaznacz opcję aby dodać python do PATH
    ![Python installer screenshot](/instalacja_skreeny/python.png)
 2. Sciągnij te repozytorium i umieść pliki w jednym folderze
-3. Otwórz plik glovoplz.py w edytorze tekstowym
+3. Skonfiguruj skrypt
+   3.1 Otwórz plik glovoplz.py w edytorze tekstowym
    ![Windows context menu open in notepad](/instalacja_skreeny/notatnik.png)
-   Wypełnij swojego użytkownika, hasło, kod miasta, i [webhook url z discord](https://support.discord.com/hc/pl/articles/228383668-Wst%C4%99p-do-Webhook%C3%B3w).
+   3.2 Wypełnij swojego użytkownika, hasło, kod miasta, i [webhook url z discord](https://support.discord.com/hc/pl/articles/228383668-Wst%C4%99p-do-Webhook%C3%B3w).
    ![config screenshot](/instalacja_skreeny/konfig.png)
-   Ustaw pożądane godziny o ktorych chcesz być powiadomiana/y w zmiennej hours wanted
+   3.3 Ustaw pożądane godziny o ktorych chcesz być powiadomiana/y w zmiennej hours wanted
    ![hours screenshot](/instalacja_skreeny/godziny.png)
 4. Odpal run.bat. Przy pierwszym włączeniu program zainstaluje potrzebne paczki dla python. Program zaczyna działać po 30 sekundach i sygnalizuje to tekstem "dzialam DATA CZAS".
