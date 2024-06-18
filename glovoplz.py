@@ -200,8 +200,12 @@ def run():
             continue
 
         for hour_span in hours_wanted:
-            start_dt = datetime.fromtimestamp(slot["startTime"] / 1000)
-            end_dt = datetime.fromtimestamp(slot["endTime"] / 1000)
+            start_dt = datetime_from_utc_to_local(
+                datetime.fromtimestamp(slot["startTime"] / 1000)
+            )
+            end_dt = datetime_from_utc_to_local(
+                datetime.fromtimestamp(slot["endTime"] / 1000)
+            )
             if start_dt.hour >= hour_span[0] and end_dt.hour <= hour_span[1]:
                 continue
             else:
@@ -209,7 +213,6 @@ def run():
 
     if len(slots) > 0:
         notify_discord(slots)
-        print(json.dumps(slots))
 
     sys.stdout.write("\rdzialam " + str(datetime.now()))
     sys.stdout.flush()
