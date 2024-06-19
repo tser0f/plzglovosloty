@@ -179,6 +179,7 @@ def notify_discord(slots):
         embed.add_embed_field(name="Start", value=start_dt.strftime("%H:%M"))
         embed.add_embed_field(name="Koniec", value=end_dt.strftime("%H:%M"))
         embed.add_embed_field(name="Mnożnik", value=slot["tags"]["label"])
+        embed.add_embed_field(name="Strefa", value=slot["zoneInfo"]["description"])
         slots_notified.append(slot["id"])
         discord_wh.add_embed(embed)
 
