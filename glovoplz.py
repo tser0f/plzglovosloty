@@ -4,7 +4,7 @@ import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-
+import functools
 import requests
 import schedule
 from discord_webhook import DiscordEmbed, DiscordWebhook
@@ -16,41 +16,39 @@ from schedule import every, repeat, run_pending
 DWEBHOOK = ""  # URL do webhooka Discord
 GUSER = ""  # Użytkownik glovo courier (email)
 GPASSWORD = ""  # hasło do glovo
-CITY_CODE = ""  # kod miasta glovo - 3 duze litery np WAW
+INSTALLATION_GUID = str(uuid.uuid4()).upper()
+SESSION_GUID = str(uuid.uuid4()).upper()
+DEVICE_ID = ""
+CITY_CODE = ""
+TOKEN_FILE = "token.json"
+INTERVAL_SECONDS = 15
+MIN_BOOKING_HOURS_AHEAD = 12
+AUTO_BOOKING_ENABLED = False
 
-INSTALLATION_GUID = str(
-    uuid.uuid4()
-).upper()  # (opcjonalnie) GUID instalacji glovo - można wyciągnać przez mitmproxy
-SESSION_GUID = str(uuid.uuid4()).upper()  # (opcjonalnie) GUID sesji glovo
-# DEVICE_ID = ""
-TOKEN_FILE = (
-    "token.json"  # plik w ktorym program zapisuje tymczasowy token do logowania w API
-)
-
-INTERVAL_SECONDS = 30  # ilość sekund między ponownym sprawdzeniem kalendarza
-
+notif_hour = datetime.now().hour
+slots_notified = []
+booking_wanted = [(13, 20)]
+booking_days_off = [6, 11]
 hours_wanted = [
-    (11, 20)
+    (11, 22)
 ]  # grupy od -> do, np [(10, 12), (15, 17)] to znaczy od 10:00 do 12:00 i od 15:00 do 17:00
 
 ##
 ###############################################################################
-notif_hour = datetime.now().hour
-slots_notified = []
 
 
-def datetime_from_utc_to_local(utc_datetime):
+def datetime_from_utc_to_local(utc_datetime) -> datetime:
     now = datetime.now()
     # offset = datetime.fromtimestamp(now) - datetime.fromtimestamp(now, pytz.UTC)
     offset = now.replace(tzinfo=timezone.utc) - now.astimezone(timezone.utc)
     return utc_datetime - offset
 
 
-def glovo_headers(authorization=None):
+def glovo_headers(authorization=None) -> dict:
     headers = {
-        "user-agent": "Glover/16956 CFNetwork/1496.0.7 Darwin/23.5.0",
+        "user-agent": "Glover/16967 CFNetwork/1498.0.2 Darwin/23.5.0",
         "glovo-location-city-code": CITY_CODE,
-        "glovo-client-info": "iOS-courier/2.230.0-16956-Production",
+        "glovo-client-info": "iOS-courier/2.231.0-16967-Production",
         "glovo-device-osversion": "17.5.1",
         "glovo-language-code": "en",
         # "glovo-device-id": DEVICE_ID,
@@ -75,7 +73,7 @@ def glovo_headers(authorization=None):
     return headers
 
 
-def g_oauth_refresh(refreshToken):
+def g_oauth_refresh(refreshToken) -> dict:
     json_data = {
         "refreshToken": refreshToken,
     }
@@ -89,7 +87,7 @@ def g_oauth_refresh(refreshToken):
     return response.json()
 
 
-def g_oauth_newtoken(username, password):
+def g_oauth_newtoken(username, password) -> dict:
     json_data = {
         "username": username,
         "grantType": "password",
@@ -104,7 +102,7 @@ def g_oauth_newtoken(username, password):
     return response.json()
 
 
-def g_oauth_token():
+def g_oauth_token() -> str:
     oauth_token_json = {}
 
     if not Path(TOKEN_FILE).is_file():
@@ -137,7 +135,7 @@ def g_oauth_token():
     return oauth_token_json["accessToken"]
 
 
-def g_calendar():
+def g_calendar() -> dict:
     response = requests.get(
         "https://api.glovoapp.com/v4/scheduling/calendar",
         headers=glovo_headers(g_oauth_token()),
@@ -150,7 +148,19 @@ def g_calendar():
     return response.json()
 
 
-def find_free_slots(calendar_json):
+def g_reserve_slot(slot_id) -> tuple[bool, dict]:
+    json_data = {"booked": True, "storeAddressId": None}
+
+    response = requests.put(
+        f"https://api.glovoapp.com/v4/scheduling/slots/{slot_id}",
+        json=json_data,
+        headers=glovo_headers(g_oauth_token()),
+    )
+
+    return (response.status_code == 200, response.json())
+
+
+def find_free_slots(calendar_json) -> list:
     free_slots = []
     for day in calendar_json["days"]:
         if day["status"] == "AVAILABLE":
@@ -159,6 +169,30 @@ def find_free_slots(calendar_json):
                     if slot["status"] == "AVAILABLE":
                         free_slots.append(slot)
     return free_slots
+
+
+def notify_discord_reservation(slot, result, response):
+    discord_wh = DiscordWebhook(url=DWEBHOOK, username="Glovo")
+
+    embed = DiscordEmbed(title="Rezerwacja", color="FFB700")
+
+    if result:
+        embed.description = "Zarezerwowano Slot"
+    else:
+        embed.description = "Nie udało się zarezerwować slotu"
+        embed.add_embed_field(name="Błąd", value=response["error"]["message"])
+
+    start_dt = datetime_from_utc_to_local(
+        datetime.fromtimestamp(slot["startTime"] / 1000)
+    )
+    end_dt = datetime_from_utc_to_local(datetime.fromtimestamp(slot["endTime"] / 1000))
+    embed.add_embed_field(name="Data", value=start_dt.strftime("%d/%m/%Y"))
+    embed.add_embed_field(name="Start", value=start_dt.strftime("%H:%M"))
+    embed.add_embed_field(name="Koniec", value=end_dt.strftime("%H:%M"))
+    embed.add_embed_field(name="Mnożnik", value=slot["tags"]["label"])
+
+    discord_wh.add_embed(embed)
+    discord_wh.execute()
 
 
 def notify_discord(slots):
@@ -179,14 +213,32 @@ def notify_discord(slots):
         embed.add_embed_field(name="Start", value=start_dt.strftime("%H:%M"))
         embed.add_embed_field(name="Koniec", value=end_dt.strftime("%H:%M"))
         embed.add_embed_field(name="Mnożnik", value=slot["tags"]["label"])
-        embed.add_embed_field(name="Strefa", value=slot["zoneInfo"]["description"])
         slots_notified.append(slot["id"])
         discord_wh.add_embed(embed)
 
-    discord_wh.execute()
+        discord_wh.execute()
+
+
+def catch_exceptions(cancel_on_failure=False):
+    def catch_exceptions_decorator(job_func):
+        @functools.wraps(job_func)
+        def wrapper(*args, **kwargs):
+            try:
+                return job_func(*args, **kwargs)
+            except:
+                import traceback
+
+                print(traceback.format_exc())
+                if cancel_on_failure:
+                    return schedule.CancelJob
+
+        return wrapper
+
+    return catch_exceptions_decorator
 
 
 @repeat(every(INTERVAL_SECONDS).seconds)
+@catch_exceptions()
 def run():
     global notif_hour, slots_notified
     slots = find_free_slots(g_calendar())
@@ -196,22 +248,32 @@ def run():
         notif_hour = datetime.now().hour
 
     for slot in slots[:]:  # remove already notified slots this hour
-        if slot["id"] in slots_notified:
-            slots.remove(slot)
-            continue
+        start_dt = datetime_from_utc_to_local(
+            datetime.fromtimestamp(slot["startTime"] / 1000)
+        )
+        end_dt = datetime_from_utc_to_local(
+            datetime.fromtimestamp(slot["endTime"] / 1000)
+        )
+        if AUTO_BOOKING_ENABLED:
+            for hour_span in booking_wanted:
+                if start_dt.hour >= hour_span[0] and end_dt.hour <= hour_span[1]:
+                    min_autobook_dt = datetime.now() + timedelta(
+                        hours=MIN_BOOKING_HOURS_AHEAD
+                    )
+                    if start_dt > min_autobook_dt:
+                        if start_dt.day not in booking_days_off:
+                            result, response = g_reserve_slot(slot["id"])
+                            notify_discord_reservation(slot, result, response)
 
         for hour_span in hours_wanted:
-            start_dt = datetime_from_utc_to_local(
-                datetime.fromtimestamp(slot["startTime"] / 1000)
-            )
-            end_dt = datetime_from_utc_to_local(
-                datetime.fromtimestamp(slot["endTime"] / 1000)
-            )
             if start_dt.hour >= hour_span[0] and end_dt.hour <= hour_span[1]:
                 continue
             else:
                 slots.remove(slot)
 
+        if slot["id"] in slots_notified:
+            slots.remove(slot)
+            continue
     if len(slots) > 0:
         notify_discord(slots)
 
