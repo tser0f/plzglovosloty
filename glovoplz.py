@@ -16,27 +16,30 @@ from schedule import every, repeat, run_pending
 DWEBHOOK = ""  # URL do webhooka Discord
 GUSER = ""  # Użytkownik glovo courier (email)
 GPASSWORD = ""  # hasło do glovo
-INSTALLATION_GUID = str(uuid.uuid4()).upper()
+INSTALLATION_GUID = str(
+    uuid.uuid4()
+).upper()  # (opcjonalnie) GUID instalacji glovo - można wyciągnać przez mitmproxy
 SESSION_GUID = str(uuid.uuid4()).upper()
 DEVICE_ID = ""
-CITY_CODE = ""
-TOKEN_FILE = "token.json"
-INTERVAL_SECONDS = 15
+CITY_CODE = ""  # kod miasta glovo - 3 duze litery np WAW
+INTERVAL_SECONDS = 30  # ilość sekund między ponownym sprawdzeniem kalendarza
+TOKEN_FILE = (
+    "token.json"  # plik w ktorym program zapisuje tymczasowy token do logowania w API
+)
 MIN_BOOKING_HOURS_AHEAD = 12
 AUTO_BOOKING_ENABLED = False
 
 notif_hour = datetime.now().hour
 slots_notified = []
 booking_wanted = [(13, 20)]
-booking_days_off = [6, 11]
+booking_days_off = [9]
 hours_wanted = [
     (11, 22)
 ]  # grupy od -> do, np [(10, 12), (15, 17)] to znaczy od 10:00 do 12:00 i od 15:00 do 17:00
 
+
 ##
 ###############################################################################
-
-
 def datetime_from_utc_to_local(utc_datetime) -> datetime:
     now = datetime.now()
     # offset = datetime.fromtimestamp(now) - datetime.fromtimestamp(now, pytz.UTC)
@@ -46,16 +49,15 @@ def datetime_from_utc_to_local(utc_datetime) -> datetime:
 
 def glovo_headers(authorization=None) -> dict:
     headers = {
-        "user-agent": "Glover/16967 CFNetwork/1498.0.2 Darwin/23.5.0",
+        "user-agent": "Glover/16978 CFNetwork/1568.100.1 Darwin/24.0.0",
         "glovo-location-city-code": CITY_CODE,
-        "glovo-client-info": "iOS-courier/2.231.0-16967-Production",
-        "glovo-device-osversion": "17.5.1",
+        "glovo-client-info": "iOS-courier/2.232.0-16978-app-store",
+        "glovo-device-osversion": "18.0",
         "glovo-language-code": "en",
-        # "glovo-device-id": DEVICE_ID,
         "glovo-request-id": str(uuid.uuid4()).upper(),
-        "glovo-app-build": "16956",
+        "glovo-app-build": "16978",
         "glovo-app-type": "courier",
-        "glovo-app-development-state": "Production",
+        "glovo-app-development-state": "app-store",
         "glovo-dynamic-session-id": SESSION_GUID,
         "glovo-request-ttl": "120000",
         "accept-language": "en",
@@ -64,7 +66,7 @@ def glovo_headers(authorization=None) -> dict:
         "accept": "application/json",
         "content-type": "application/json",
         "glovo-installation-id": INSTALLATION_GUID,
-        "glovo-app-version": "2.230.0",
+        "glovo-app-version": "2.232.0",
     }
 
     if authorization is not None:
@@ -142,8 +144,8 @@ def g_calendar() -> dict:
     )
 
     # TODO: remove this
-    with open("last_cal.json", "wt") as f:
-        json.dump(response.json(), f)
+    # with open("last_cal.json", "wt") as f:
+    #    json.dump(response.json(), f)
 
     return response.json()
 
@@ -216,7 +218,7 @@ def notify_discord(slots):
         slots_notified.append(slot["id"])
         discord_wh.add_embed(embed)
 
-        discord_wh.execute()
+    discord_wh.execute()
 
 
 def catch_exceptions(cancel_on_failure=False):
@@ -237,11 +239,22 @@ def catch_exceptions(cancel_on_failure=False):
     return catch_exceptions_decorator
 
 
+def remove_unavailable_notified_slots(calendar):
+    for day in calendar["days"]:
+        for zone in day["zonesSchedule"]:
+            for slot in zone["slots"]:
+                if slot["status"] != "AVAILABLE":
+                    if slot["id"] in slots_notified:
+                        slots_notified.remove(slot["id"])
+
+
 @repeat(every(INTERVAL_SECONDS).seconds)
 @catch_exceptions()
 def run():
     global notif_hour, slots_notified
-    slots = find_free_slots(g_calendar())
+    calendar = g_calendar()
+    remove_unavailable_notified_slots(calendar)
+    slots = find_free_slots(calendar)
 
     if notif_hour != datetime.now().hour:
         slots_notified = []
@@ -269,11 +282,25 @@ def run():
             if start_dt.hour >= hour_span[0] and end_dt.hour <= hour_span[1]:
                 continue
             else:
+                # print("HOURS WNTED DEL : ")
+                #
+                # print(
+                #     str(start_dt.hour)
+                #     + " >= "
+                #     + str(hour_span[0])
+                #     + " AND end_dt = "
+                #     + str(end_dt)
+                #     + "<= "
+                #     + str(hour_span[1])
+                # )
                 slots.remove(slot)
 
         if slot["id"] in slots_notified:
+            # TODO: DEBUG
+            # print("ID DEL : ")
+            # print(json.dumps(slot))
             slots.remove(slot)
-            continue
+
     if len(slots) > 0:
         notify_discord(slots)
 
